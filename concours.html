@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Parad'Aise - BDE Game</title>
+    <style>
+        body { margin: 0; padding: 0; background-color: #70c5ce; overflow: hidden; font-family: 'Courier New', Courier, monospace; touch-action: none; user-select: none; -webkit-user-select: none; }
+        canvas { display: block; margin: 0 auto; }
+        #scoreBox { position: absolute; top: 10%; width: 100%; text-align: center; font-size: 60px; color: white; font-weight: bold; text-shadow: 4px 4px 0 #000; pointer-events: none; z-index: 10; }
+        #startScreen, #gameOverScreen { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(255, 255, 255, 0.95); padding: 20px; border-radius: 20px; border: 5px solid #000; display: none; width: 85%; max-width: 350px; box-shadow: 10px 10px 0px rgba(0,0,0,0.5); }
+        button { background: #ff69b4; color: white; border: none; padding: 15px 40px; font-size: 24px; border-radius: 10px; cursor: pointer; font-weight: bold; border: 3px solid black; box-shadow: 4px 4px 0px #000; margin-top: 15px; }
+        button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0px #000; }
+        h1 { margin-top: 0; font-size: 36px; color: #ff69b4; text-shadow: 2px 2px 0 #000; -webkit-text-stroke: 1.5px black; }
+        p { font-size: 20px; font-weight: bold;}
+        .security-code { font-size: 14px; color: #333; margin-top: 15px; border-top: 2px dashed #ccc; padding-top: 10px; background: #f0f0f0; padding: 10px; border-radius: 5px;}
+    </style>
+</head>
+<body>
+
+    <div id="scoreBox">0</div>
+
+    <div id="startScreen" style="display: block;">
+        <h1>PARAD'AISE<br>FLAPPY</h1>
+        <p>Mode XXL !<br>Tape pour voler.</p>
+        <button onclick="startGame()">GO !</button>
+    </div>
+
+    <div id="gameOverScreen">
+        <h1>PERDU !</h1>
+        <p>Score: <span id="finalScore">0</span></p>
+        <p>Meilleur: <span id="bestScore">0</span></p>
+        
+        <div class="security-code">
+            CODE VERIF:<br>
+            <span id="securityCode" style="font-family: monospace; font-size: 24px; font-weight: bold; color: #000; letter-spacing: 2px;">---</span>
+        </div>
+        
+        <p style="font-size: 12px; color: #555; margin-top:5px;">(Sans ce code, pas de cadeau !)</p>
+        <button onclick="resetGame()">REJOUER</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const birdImg = new Image(); birdImg.src = 'bird.png';
+        const bgImg = new Image(); bgImg.src = 'bg.png';
+
+        // --- SECURITE ---
+        let gameStartTime = 0;
+
+        // --- REGLAGES ---
+        let frames = 0;
+        let score = 0;
+        let gamePlaying = false;
+        let gravity = 0.18; 
+        let speed = 3.0;    
+        let jumpStrength = 4.8; 
+        let pipeGap = 290; 
+        let pipeSpawnRate = 100; 
+
+        function resize() {
+            canvas.height = window.innerHeight;
+            canvas.width = window.innerWidth > 500 ? 500 : window.innerWidth;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const bird = {
+            x: 50, y: 150, w: 85, h: 85, velocity: 0, rotation: 0,
+            draw: function() {
+                ctx.save();
+                ctx.translate(this.x + this.w/2, this.y + this.h/2);
+                this.rotation += (this.velocity * 0.1 - this.rotation) * 0.5;
+                ctx.rotate(this.rotation);
+                if (birdImg.complete && birdImg.naturalHeight !== 0) ctx.drawImage(birdImg, -this.w/2, -this.h/2, this.w, this.h);
+                else { ctx.fillStyle = "#ff69b4"; ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h); }
+                ctx.restore();
+            },
+            update: function() {
+                this.velocity += gravity;
+                this.y += this.velocity;
+                if (this.y + this.h >= canvas.height - 20) { this.y = canvas.height - 20 - this.h; gameOver(); }
+                if (this.y < 0) { this.y = 0; this.velocity = 0; }
+            },
+            flap: function() { this.velocity = -jumpStrength; }
+        };
+
+        const pipes = {
+            position: [], w: 80, 
+            draw: function() {
+                for (let i = 0; i < this.position.length; i++) {
+                    let p = this.position[i];
+                    let topY = p.y;
+                    let bottomY = p.y + pipeGap;
+                    ctx.fillStyle = "#74BF2E"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3;
+                    ctx.fillRect(p.x, 0, this.w, topY); ctx.strokeRect(p.x, -2, this.w, topY + 2);
+                    ctx.fillStyle = "#558C22"; ctx.fillRect(p.x - 5, topY - 25, this.w + 10, 25); ctx.strokeRect(p.x - 5, topY - 25, this.w + 10, 25);
+                    ctx.fillStyle = "#74BF2E"; ctx.fillRect(p.x, bottomY, this.w, canvas.height - bottomY); ctx.strokeRect(p.x, bottomY, this.w, canvas.height - bottomY);
+                    ctx.fillStyle = "#558C22"; ctx.fillRect(p.x - 5, bottomY, this.w + 10, 25); ctx.strokeRect(p.x - 5, bottomY, this.w + 10, 25);
+                }
+            },
+            update: function() {
+                if (frames % pipeSpawnRate === 0) {
+                    const minHeight = 40; const maxHeight = Math.max(minHeight, canvas.height - pipeGap - minHeight - 60);
+                    this.h = Math.floor(Math.random() * (maxHeight - minHeight + 1) + minHeight);
+                    this.position.push({ x: canvas.width, y: this.h });
+                }
+                for (let i = 0; i < this.position.length; i++) {
+                    let p = this.position[i];
+                    p.x -= speed;
+                    let tolerance = 15; 
+                    if (bird.x + bird.w - tolerance > p.x && bird.x + tolerance < p.x + this.w && (bird.y + tolerance < p.y || bird.y + bird.h - tolerance > p.y + pipeGap)) gameOver();
+                    if (p.x + this.w < bird.x && !p.passed) { score++; document.getElementById("scoreBox").innerText = score; p.passed = true; }
+                    if (p.x + this.w <= -100) { this.position.shift(); i--; }
+                }
+            },
+            reset: function() { this.position = []; }
+        };
+
+        function draw() {
+            if (bgImg.complete && bgImg.naturalHeight !== 0) ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+            else { ctx.fillStyle = "#70c5ce"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+            pipes.draw(); bird.draw();
+            ctx.fillStyle = "#e1c699"; ctx.fillRect(0, canvas.height - 20, canvas.width, 20);
+            ctx.beginPath(); ctx.moveTo(0, canvas.height - 20); ctx.lineTo(canvas.width, canvas.height - 20); ctx.stroke();
+        }
+
+        function update() { bird.update(); pipes.update(); }
+        function loop() { if (!gamePlaying) return; update(); draw(); frames++; requestAnimationFrame(loop); }
+
+        function startGame() {
+            document.getElementById("startScreen").style.display = "none";
+            document.getElementById("gameOverScreen").style.display = "none";
+            bird.y = canvas.height / 2; bird.velocity = 0; pipes.reset();
+            score = 0; frames = 0;
+            gameStartTime = Date.now(); 
+            document.getElementById("scoreBox").innerText = "0";
+            gamePlaying = true; loop();
+        }
+        function resetGame() { startGame(); }
+
+        function gameOver() {
+            gamePlaying = false;
+            
+            // 1. VERIF TEMPS (Anti-Speedhack)
+            let timePlayed = (Date.now() - gameStartTime) / 1000; 
+            if (score > 0 && timePlayed < (score * 0.6)) { 
+                score = 0; // Score annulé si trop rapide
+            }
+
+            // 2. CALCUL DU CODE SECU (Ta formule)
+            // Formule : Score * 142 + 777 - 13 * 7 + 1
+            // Rappel math : 13*7 = 91. 
+            // Donc 777 - 91 + 1 = 687.
+            
+            let secureCode = (score * 142) + 777 - (13 * 7) + 1;
+
+            // Sauvegarde Best Score
+            let best = localStorage.getItem('bde_paradise_best') || 0;
+            if (score > best) { best = score; localStorage.setItem('bde_paradise_best', best); }
+
+            document.getElementById("finalScore").innerText = score;
+            document.getElementById("bestScore").innerText = best;
+            document.getElementById("securityCode").innerText = secureCode; 
+            document.getElementById("gameOverScreen").style.display = "block";
+        }
+
+        function jump(e) { if (e.cancelable && e.type === 'touchstart') e.preventDefault(); if(gamePlaying) bird.flap(); }
+        canvas.addEventListener("mousedown", jump); canvas.addEventListener("touchstart", jump, {passive: false});
+        window.addEventListener('keydown', function(e){ if(e.code === 'Space') jump(e); });
+
+        resize(); draw();
+    </script>
+</body>
+</html>
