@@ -8,10 +8,10 @@
         body {
             margin: 0;
             padding: 0;
-            background-color: #70c5ce; /* Couleur du ciel si l'image charge mal */
+            background-color: #70c5ce;
             overflow: hidden;
             font-family: 'Courier New', Courier, monospace;
-            touch-action: none; /* Empêche le zoom sur mobile */
+            touch-action: none;
         }
         canvas {
             display: block;
@@ -35,16 +35,17 @@
             left: 50%;
             transform: translate(-50%, -50%);
             text-align: center;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             padding: 20px;
             border-radius: 15px;
             border: 4px solid #000;
-            display: none; /* Caché par défaut */
+            display: none;
             width: 80%;
             max-width: 300px;
+            box-shadow: 5px 5px 0px #000;
         }
         button {
-            background: #ff69b4; /* Rose BDE */
+            background: #ff69b4;
             color: white;
             border: none;
             padding: 15px 30px;
@@ -52,10 +53,15 @@
             border-radius: 10px;
             cursor: pointer;
             font-weight: bold;
-            border: 2px solid black;
+            border: 3px solid black;
+            box-shadow: 3px 3px 0px #000;
         }
-        h1 { margin-top: 0; font-size: 24px; }
-        p { font-size: 18px; }
+        button:active {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0px #000;
+        }
+        h1 { margin-top: 0; font-size: 28px; color: #ff69b4; text-shadow: 2px 2px 0 #000; -webkit-text-stroke: 1px black; }
+        p { font-size: 18px; font-weight: bold;}
     </style>
 </head>
 <body>
@@ -72,60 +78,61 @@
         <h1>PERDU !</h1>
         <p>Score: <span id="finalScore">0</span></p>
         <p>Meilleur: <span id="bestScore">0</span></p>
-        <p style="font-size: 14px; color: #555;">Fais une capture d'écran si tu as battu le record !</p>
+        <p style="font-size: 14px; color: #333;">Montre ce score au stand BDE !</p>
         <button onclick="resetGame()">REJOUER</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // --- CONFIGURATION ---
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
         
-        // Charger les images (METTRE LES BONS NOMS DE FICHIERS ICI)
-        const birdImg = new Image();
-        birdImg.src = 'bird.png'; // Ton image de l'ange
-        
-        const bgImg = new Image();
-        bgImg.src = 'bg.png';     // Ton image de fond
-        
-        const pipeImg = new Image();
-        pipeImg.src = 'pipe.png'; // Ton image de palmier/obstacle
+        const birdImg = new Image(); birdImg.src = 'bird.png';
+        const bgImg = new Image(); bgImg.src = 'bg.png';
+        const pipeImg = new Image(); pipeImg.src = 'pipe.png';
 
-        // Variables du jeu
+        // --- NOUVEAUX REGLAGES PHYSIQUE (Plus facile) ---
         let frames = 0;
         let score = 0;
         let gamePlaying = false;
-        let gravity = 0.25;
-        let speed = 3; // Vitesse de défilement
-        let pipeGap = 180; // Espace entre les tuyaux (plus grand = plus facile)
+        let gravity = 0.15; // BEAUCOUP MOINS FORT (avant 0.25)
+        let speed = 2.5;    // Un peu plus lent (avant 3)
+        let jumpStrength = 4.2; // Ajusté pour la nouvelle gravité
 
-        // Redimensionner le canvas pour mobile
+        // Réglages des tuyaux
+        let pipeGap = 190; // Espace un peu plus grand
+        let pipeSpawnRate = 140; // Apparaissent moins souvent
+
         function resize() {
             canvas.height = window.innerHeight;
-            canvas.width = window.innerWidth > 480 ? 480 : window.innerWidth;
+            canvas.width = window.innerWidth > 500 ? 500 : window.innerWidth;
         }
         window.addEventListener('resize', resize);
         resize();
 
-        // --- OBJET OISEAU (ANGE) ---
         const bird = {
             x: 50,
             y: 150,
-            w: 40, // Largeur de l'ange
-            h: 40, // Hauteur de l'ange
+            w: 40,
+            h: 40,
             velocity: 0,
-            jump: 5.5,
+            rotation: 0,
             
             draw: function() {
-                // Si l'image n'est pas chargée, on dessine un carré jaune
+                ctx.save();
+                ctx.translate(this.x + this.w/2, this.y + this.h/2);
+                // Petite rotation selon la vitesse pour le style
+                this.rotation = this.velocity * 0.05;
+                ctx.rotate(this.rotation);
+
                 if (birdImg.complete && birdImg.naturalHeight !== 0) {
-                    ctx.drawImage(birdImg, this.x, this.y, this.w, this.h);
+                    ctx.drawImage(birdImg, -this.w/2, -this.h/2, this.w, this.h);
                 } else {
-                    ctx.fillStyle = "yellow";
-                    ctx.fillRect(this.x, this.y, this.w, this.h);
+                    ctx.fillStyle = "#ff69b4";
+                    ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
                 }
+                ctx.restore();
             },
             
             update: function() {
@@ -133,8 +140,8 @@
                 this.y += this.velocity;
 
                 // Sol
-                if (this.y + this.h >= canvas.height) {
-                    this.y = canvas.height - this.h;
+                if (this.y + this.h >= canvas.height - 10) { // -10 pour le sable
+                    this.y = canvas.height - 10 - this.h;
                     gameOver();
                 }
                 // Plafond
@@ -145,102 +152,107 @@
             },
             
             flap: function() {
-                this.velocity = -this.jump;
+                this.velocity = -jumpStrength;
             }
         };
 
-        // --- OBJET TUYAUX (PALMIERS) ---
         const pipes = {
             position: [],
-            w: 60, // Largeur du tuyau
-            
+            w: 70, // Tuyaux un peu plus larges pour le palmier
+            pipeImageHeight: 200, // Hauteur fixe de l'image du palmier
+
             draw: function() {
                 for (let i = 0; i < this.position.length; i++) {
                     let p = this.position[i];
                     let topY = p.y;
-                    let bottomY = p.y + this.h + pipeGap;
+                    let bottomY = p.y + pipeGap;
 
+                    // Tuyau du haut (Bloc vert simple pour l'instant)
+                    ctx.fillStyle = "#2e8b57";
+                    ctx.fillRect(p.x, 0, this.w, topY); 
+                    ctx.strokeStyle = "#1e5b37";
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(p.x, 0, this.w, topY);
+                    
+                    // --- CORRECTION TUYAU DU BAS (PALMIER) ---
                     if (pipeImg.complete && pipeImg.naturalHeight !== 0) {
-                        // Tuyau du haut (inversé si possible, sinon bloc vert)
-                        ctx.fillStyle = "#2e8b57"; // Vert
-                        ctx.fillRect(p.x, 0, this.w, topY); 
-                        // Tuyau du bas (Image)
-                        ctx.drawImage(pipeImg, p.x, bottomY, this.w, canvas.height - bottomY);
+                        // 1. Dessiner l'image du palmier avec une hauteur FIXE
+                        // On le dessine un peu plus haut (bottomY - 30) pour que les feuilles dépassent dans le vide
+                        ctx.drawImage(pipeImg, p.x, bottomY - 30, this.w, this.pipeImageHeight);
+                        
+                        // 2. Remplir le bas avec de la couleur tronc si nécessaire
+                        let trunkStartY = bottomY - 30 + this.pipeImageHeight;
+                        if (trunkStartY < canvas.height) {
+                            ctx.fillStyle = "#8B4513"; // Marron tronc
+                            ctx.fillRect(p.x + 25, trunkStartY, this.w - 50, canvas.height - trunkStartY);
+                        }
                     } else {
-                        // Fallback rectangles verts
-                        ctx.fillStyle = "#2e8b57";
-                        ctx.fillRect(p.x, 0, this.w, topY);
+                        // Fallback si pas d'image
+                        ctx.fillStyle = "#8B4513";
                         ctx.fillRect(p.x, bottomY, this.w, canvas.height - bottomY);
                     }
                 }
             },
             
             update: function() {
-                // Ajouter un tuyau toutes les 120 frames
-                if (frames % 120 === 0) {
-                    this.h = (Math.random() * (canvas.height / 2)); // Hauteur aléatoire
+                if (frames % pipeSpawnRate === 0) {
+                    // Calcul pour que le trou ne soit ni trop haut ni trop bas
+                    const padding = canvas.height * 0.2; // Marge de 20% haut et bas
+                    const availableHeight = canvas.height - pipeGap - (padding * 2);
+                    this.h = Math.random() * availableHeight + padding;
+                    
                     this.position.push({
                         x: canvas.width,
-                        y: Math.max(50, this.h) // Évite les tuyaux trop petits
+                        y: this.h
                     });
                 }
 
                 for (let i = 0; i < this.position.length; i++) {
                     let p = this.position[i];
-                    
-                    // Déplacement
                     p.x -= speed;
 
-                    // Collisions
-                    let bottomPipeY = p.y + this.h + pipeGap; // Ajustement ici
+                    // Collisions (Hitbox un peu plus gentille)
+                    let birdHitboxMargin = 5;
+                    let bottomPipeY = p.y + pipeGap;
                     
-                    // Collision simple (boîte englobante)
                     if (
-                        bird.x + bird.w > p.x && 
-                        bird.x < p.x + this.w && 
-                        (bird.y < p.y || bird.y + bird.h > bottomPipeY)
+                        bird.x + bird.w - birdHitboxMargin > p.x && 
+                        bird.x + birdHitboxMargin < p.x + this.w && 
+                        (bird.y + birdHitboxMargin < p.y || bird.y + bird.h - birdHitboxMargin > bottomPipeY)
                     ) {
                         gameOver();
                     }
 
-                    // Score
                     if (p.x + this.w < bird.x && !p.passed) {
                         score++;
                         document.getElementById("scoreBox").innerText = score;
                         p.passed = true;
                     }
 
-                    // Supprimer si hors écran
-                    if (p.x + this.w <= 0) {
+                    if (p.x + this.w <= -this.w) {
                         this.position.shift();
-                        i--; // Corriger l'index après suppression
+                        i--;
                     }
                 }
             },
-            
-            reset: function() {
-                this.position = [];
-            }
+            reset: function() { this.position = []; }
         };
 
-        // --- BOUCLE DE JEU ---
         function draw() {
-            // Fond
             if (bgImg.complete && bgImg.naturalHeight !== 0) {
-                ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
+                // Petit effet de parallaxe simple sur le fond
+                let bgX = -(frames * (speed/2)) % canvas.width;
+                ctx.drawImage(bgImg, bgX, 0, canvas.width, canvas.height);
+                ctx.drawImage(bgImg, bgX + canvas.width, 0, canvas.width, canvas.height);
             } else {
                 ctx.fillStyle = "#70c5ce";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
-
             bird.draw();
             pipes.draw();
         }
 
-        function update() {
-            bird.update();
-            pipes.update();
-        }
+        function update() { bird.update(); pipes.update(); }
 
         function loop() {
             if (!gamePlaying) return;
@@ -250,49 +262,41 @@
             requestAnimationFrame(loop);
         }
 
-        // --- CONTRÔLES ---
         function startGame() {
             document.getElementById("startScreen").style.display = "none";
             document.getElementById("gameOverScreen").style.display = "none";
-            gamePlaying = true;
-            loop();
-        }
-
-        function resetGame() {
-            bird.y = 150;
+            bird.y = canvas.height / 2;
             bird.velocity = 0;
             pipes.reset();
             score = 0;
             frames = 0;
             document.getElementById("scoreBox").innerText = "0";
+            gamePlaying = true;
+            loop();
+        }
+
+        function resetGame() {
             startGame();
         }
 
         function gameOver() {
             gamePlaying = false;
-            
-            // Gestion High Score
-            let best = localStorage.getItem('bde_flappy_best') || 0;
-            if (score > best) {
-                best = score;
-                localStorage.setItem('bde_flappy_best', best);
-            }
-
+            let best = localStorage.getItem('bde_paradise_best') || 0;
+            if (score > best) { best = score; localStorage.setItem('bde_paradise_best', best); }
             document.getElementById("finalScore").innerText = score;
             document.getElementById("bestScore").innerText = best;
             document.getElementById("gameOverScreen").style.display = "block";
         }
 
-        // Gestionnaire de clic / touche
-        window.addEventListener("click", function() {
+        // Contrôles (Souris + Tactile)
+        function jump(e) {
+            if (e.cancelable && e.type === 'touchstart') e.preventDefault();
             if(gamePlaying) bird.flap();
-        });
-        window.addEventListener("touchstart", function(e) {
-            e.preventDefault(); // Empêche le scroll
-            if(gamePlaying) bird.flap();
-        }, {passive: false});
+        }
+        canvas.addEventListener("click", jump);
+        canvas.addEventListener("touchstart", jump, {passive: false});
 
-        // Initial draw
+        // Initialisation
         resize();
         draw();
 
